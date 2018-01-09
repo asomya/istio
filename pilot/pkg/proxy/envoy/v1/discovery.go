@@ -170,6 +170,7 @@ type discoveryCacheEntry struct {
 	hit           uint64 // atomic
 	miss          uint64 // atomic
 	resourceCount uint32
+	timeStamp     time.Time
 }
 
 type discoveryCache struct {
@@ -227,6 +228,7 @@ func (c *discoveryCache) updateCachedDiscoveryResponse(key string, resourceCount
 	}
 	entry.resourceCount = resourceCount
 	entry.data = data
+	entry.timeStamp = time.Now()
 	atomic.AddUint64(&entry.miss, 1)
 	cacheMissCounter.With(c.cacheSizeLabels()).Inc()
 	cacheSizeGauge.With(c.cacheSizeLabels()).Add(cacheSizeDelta)
@@ -306,6 +308,7 @@ const (
 	ServiceCluster  = "service-cluster"
 	ServiceNode     = "service-node"
 	RouteConfigName = "route-config-name"
+	CacheStatsKey = "cache-stats-key"
 )
 
 // DiscoveryServiceOptions contains options for create a new discovery
@@ -432,6 +435,12 @@ func (ds *DiscoveryService) Register(container *restful.Container) {
 		To(ds.ClearCacheStats).
 		Doc("Clear discovery service cache stats"))
 
+	ws.Route(ws.
+		GET(fmt.Sprintf("/v1/cache_stats_delete_key/{%s}", CacheStatsKey).
+		To(ds.ClearCacheStatsKey).
+		Doc("Clear one key from the service cache stats").
+		Param(ws.PathParameter(CacheStatsKey, "cache stats key").DataType("string")))
+
 	container.Add(ws)
 }
 
@@ -448,6 +457,7 @@ func (ds *DiscoveryService) Start(stop chan struct{}) (net.Addr, error) {
 	if err != nil {
 		return nil, err
 	}
+
 
 	go func() {
 		go func() {
@@ -494,6 +504,21 @@ func (ds *DiscoveryService) ClearCacheStats(_ *restful.Request, _ *restful.Respo
 	ds.cdsCache.resetStats()
 	ds.rdsCache.resetStats()
 	ds.ldsCache.resetStats()
+}
+
+func (ds *DiscoveryService) ClearCacheStatsKey(_ *restful.Request, _ *restful.Response) {
+	if v, ok := ds.sdsCache[cacheKey]; ok {
+		delete(ds.sdsCache, cacheKey)
+	}
+	if v, ok := ds.cdsCache[cacheKey]; ok {
+		delete(ds.cdsCache, cacheKey)
+	}
+	if v, ok := ds.ldsCache[cacheKey]; ok {
+		delete(ds.ldsCache, cacheKey)
+	}
+	if v, ok := ds.rdsCache[cacheKey]; ok {
+		delete(ds.rdsCache, cacheKey)
+	}
 }
 
 // clearCache will clear all envoy caches. Called by service, instance and config handlers.
